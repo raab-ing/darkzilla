@@ -1,0 +1,29 @@
+darkzilla: fix file-list hover flicker in dark mode.
+
+filelistctrl.cpp: don't force wxBG_STYLE_SYSTEM in dark mode; it overrode
+the double-buffered wxBG_STYLE_PAINT wxWidgets uses, making file-list rows
+flicker on mouse hover.
+
+Derived from Pharaoh2k/FileZilla-Themed-For-Windows (GPLv3+).
+
+diff --git a/src/interface/filelistctrl.cpp b/src/interface/filelistctrl.cpp
+--- a/src/interface/filelistctrl.cpp
++++ b/src/interface/filelistctrl.cpp
+@@ -280,8 +280,16 @@
+ 	m_genericTypes[genericTypes::file] = _("File").ToStdWstring();
+ 	m_genericTypes[genericTypes::directory] = _("Directory").ToStdWstring();
+ 
++#ifdef __WXMSW__
++	// darkzilla: in dark mode wxWidgets custom-draws the list with double
++	// buffering and uses wxBG_STYLE_PAINT to avoid flicker. Forcing
++	// wxBG_STYLE_SYSTEM re-enables background erasing, which makes the rows
++	// flicker when the hot item changes on mouse-over. Keep the system
++	// background style only in light mode.
++	if (!wxSystemSettings::GetAppearance().IsDark())
++		SetBackgroundStyle(wxBG_STYLE_SYSTEM);
++#else
+ 	SetBackgroundStyle(wxBG_STYLE_SYSTEM);
+-#ifndef __WXMSW__
+ 	GetMainWindow()->SetBackgroundStyle(wxBG_STYLE_SYSTEM);
+ #endif
+ 

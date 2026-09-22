@@ -1,0 +1,188 @@
+Port FileZilla Client to wxWidgets 3.3 (upstream targets 3.2.x).
+
+Upstream's configure explicitly rejects wxWidgets 3.3 ("You must use
+wxWidgets 3.2.x"); relax that gate. The remaining hunks are compile/runtime
+fixes for wx 3.3 API changes:
+
+- aui_notebook_ex.cpp: GetTabSize override signature wxDC& -> wxReadOnlyDC&;
+  drop the base wxAuiNotebook::OnTabDragMotion(evt) call (3.3.2 made tab-drag
+  handling internal and removed that overload).
+- fileexistsdlg.cpp: wxIcon SetHandle/SetSize -> InitFromHICON.
+- LocalTreeView.cpp, sitemanager_controls.cpp, optionspage_filetype.cpp:
+  explicit wide-char/string literals (wx 3.3 dropped wxString implicit
+  narrow conversions).
+- file_utils.cpp: create the modal-loop helper window hidden and size-less;
+  wxTRANSPARENT_WINDOW is a no-op since wx 3.3, so the helper became an
+  opaque child that blanked the file list/tree behind shell dialogs.
+- Mainfrm.cpp: create/reparent the message-log view as a child of the queue
+  notebook before AddPage; wx 3.3.3 no longer reparents pages in
+  wxAuiNotebook::InsertPage and asserts instead.
+
+Derived from Pharaoh2k/FileZilla-Themed-For-Windows (GPLv3+).
+
+diff --git a/configure b/configure
+--- a/configure
++++ b/configure
+@@ -21580,7 +21580,8 @@
+         equivalent variable and wxWidgets version is $MIN_WX_VERSION or above.
+       " "$LINENO" 5
+     fi
+-    if test "${WX_VERSION_MAJOR}.${WX_VERSION_MINOR}" = "3.3"; then
++    # darkzilla: allow wxWidgets 3.3.x (needed for native dark mode).
++    if test "${WX_VERSION_MAJOR}.${WX_VERSION_MINOR}" = "disabled-3.3-gate"; then
+       as_fn_error $? "You must use wxWidgets 3.2.x, development versions of wxWidgets are not supported." "$LINENO" 5
+     fi
+ 
+diff --git a/configure.ac b/configure.ac
+--- a/configure.ac
++++ b/configure.ac
+@@ -226,7 +226,8 @@
+         equivalent variable and wxWidgets version is $MIN_WX_VERSION or above.
+       ])
+     fi
+-    if test "${WX_VERSION_MAJOR}.${WX_VERSION_MINOR}" = "3.3"; then
++    dnl darkzilla: allow wxWidgets 3.3.x (needed for native dark mode).
++    if test "${WX_VERSION_MAJOR}.${WX_VERSION_MINOR}" = "disabled-3.3-gate"; then
+       AC_MSG_ERROR([You must use wxWidgets 3.2.x, development versions of wxWidgets are not supported.])
+     fi
+ 
+diff --git a/src/interface/LocalTreeView.cpp b/src/interface/LocalTreeView.cpp
+--- a/src/interface/LocalTreeView.cpp
++++ b/src/interface/LocalTreeView.cpp
+@@ -1510,7 +1510,7 @@
+ 				type = fz::local_filesys::get_file_info(fz::to_native(path + pData->m_known_subdir), was_link, 0, &date, &attributes);
+ 			}
+ 			else {
+-				type = fz::local_filesys::get_file_info(fz::to_native(path + fz::local_filesys::path_separator + pData->m_known_subdir), was_link, 0, &date, &attributes);
++				type = fz::local_filesys::get_file_info(fz::to_native(path + static_cast<wchar_t>(fz::local_filesys::path_separator) + pData->m_known_subdir), was_link, 0, &date, &attributes);
+ 			}
+ 			if (type == fz::local_filesys::dir) {
+ 				CFilterManager filter;
+diff --git a/src/interface/Mainfrm.cpp b/src/interface/Mainfrm.cpp
+--- a/src/interface/Mainfrm.cpp
++++ b/src/interface/Mainfrm.cpp
+@@ -417,6 +417,13 @@
+ 	if (message_log_position == 1) {
+ 		m_pStatusView = new CStatusView(m_pQueueLogSplitter, options_);
+ 	}
++	else if (message_log_position == 2) {
++		// The message log becomes a page of the queue notebook below, so it
++		// must be created as a child of it. wxWidgets 3.3.3 no longer
++		// reparents pages silently in wxAuiNotebook::InsertPage and asserts
++		// ("page must be a child of the notebook") instead.
++		m_pStatusView = new CStatusView(m_pQueuePane, options_);
++	}
+ 	else {
+ 		m_pStatusView = new CStatusView(m_pTopSplitter, options_);
+ 	}
+@@ -1943,6 +1950,9 @@
+ 				}
+ 				break;
+ 			case 2:
++				// Same as the other cases: give the log its new parent before
++				// adding it, wxWidgets 3.3.3 no longer does this for us.
++				m_pStatusView->Reparent(m_pQueuePane);
+ 				m_pQueuePane->AddPage(m_pStatusView, _("Message log"));
+ 				break;
+ 			}
+diff --git a/src/interface/aui_notebook_ex.cpp b/src/interface/aui_notebook_ex.cpp
+--- a/src/interface/aui_notebook_ex.cpp
++++ b/src/interface/aui_notebook_ex.cpp
+@@ -99,7 +99,7 @@
+ 		return art;
+ 	}
+ 
+-	virtual wxSize GetTabSize(wxDC& dc, wxWindow* wnd, const wxString& caption, const wxBitmapBundle& bitmap, bool active, int close_button_state, int* x_extent) override
++	virtual wxSize GetTabSize(wxReadOnlyDC& dc, wxWindow* wnd, const wxString& caption, const wxBitmapBundle& bitmap, bool active, int close_button_state, int* x_extent) override
+ 	{
+ 		wxSize size = TabArtBase::GetTabSize(dc, wnd, caption, bitmap, active, close_button_state, x_extent);
+ 
+@@ -219,7 +219,12 @@
+ 
+ void wxAuiNotebookEx::OnTabDragMotion(wxAuiNotebookEvent& evt)
+ {
+-	wxAuiNotebook::OnTabDragMotion(evt);
++	// wxWidgets 3.3.2 changed wxAuiNotebook::OnTabDragMotion to an internal
++	// handler (wxAuiTabCtrl*, int) that runs the default drag behaviour before
++	// this event is posted, so we no longer call the base here; we just keep
++	// tracking the active page. (In 3.3.1 the base was the event handler and
++	// we had to chain to it.)
++	evt.Skip();
+ 
+ 	int active = m_tabs.GetActivePage();
+ 	if (active != wxNOT_FOUND) {
+diff --git a/src/interface/file_utils.cpp b/src/interface/file_utils.cpp
+--- a/src/interface/file_utils.cpp
++++ b/src/interface/file_utils.cpp
+@@ -331,8 +331,19 @@
+ 	wxWindow * focused = wxWindow::FindFocus();
+ 
+ 	{
+-		// SHFileOperation shows non-modal dialogs. Force them to be modal by using a new modal event loop
+-		wxWindow dummy(parent, -1, parent ? parent->GetPosition() : wxDefaultPosition, parent ? parent->GetSize() : wxDefaultSize, wxTRANSPARENT_WINDOW);
++		// SHFileOperation shows non-modal dialogs. Force them to be modal by using a new modal event loop.
++		//
++		// The dummy window only hosts the nested event loop and the deferred call, it must never be
++		// visible. It used to be created as a child covering the whole parent and relied on
++		// wxTRANSPARENT_WINDOW to stay invisible. That style is a no-op since wxWidgets 3.3 (it is
++		// defined as 0), which turned the dummy into an opaque child window painted with the window
++		// background colour, blanking the file list or tree behind the shell's confirmation dialog.
++		// Create it hidden and without a size instead, that works with every wxWidgets version.
++		wxWindow dummy;
++		dummy.Hide();
++		if (parent) {
++			dummy.Create(parent, wxID_ANY, wxPoint(0, 0), wxSize(0, 0), wxBORDER_NONE);
++		}
+ 		wxModalEventLoop loop(&dummy);
+ 		dummy.CallAfter([&]() {
+ 			res = SHFileOperation(&op);
+diff --git a/src/interface/fileexistsdlg.cpp b/src/interface/fileexistsdlg.cpp
+--- a/src/interface/fileexistsdlg.cpp
++++ b/src/interface/fileexistsdlg.cpp
+@@ -184,8 +184,7 @@
+ 		dc->DrawRectangle(0, 0, size.x, size.y);
+ 
+ 		wxIcon icon;
+-		icon.SetHandle(fileinfo.hIcon);
+-		icon.SetSize(size.x, size.y);
++		icon.InitFromHICON((WXHICON)fileinfo.hIcon, size.x, size.y);
+ 
+ 		dc->DrawIcon(icon, 0, 0);
+ 		delete dc;
+diff --git a/src/interface/settings/optionspage_filetype.cpp b/src/interface/settings/optionspage_filetype.cpp
+--- a/src/interface/settings/optionspage_filetype.cpp
++++ b/src/interface/settings/optionspage_filetype.cpp
+@@ -126,7 +126,7 @@
+ 			ext.clear();
+ 		}
+ 		else {
+-			ext += extensions.substr(0, pos - 1) + '|';
++			ext += extensions.substr(0, pos - 1) + L'|';
+ 		}
+ 		extensions = extensions.substr(pos + 1);
+ 		pos = extensions.find('|');
+diff --git a/src/interface/sitemanager_controls.cpp b/src/interface/sitemanager_controls.cpp
+--- a/src/interface/sitemanager_controls.cpp
++++ b/src/interface/sitemanager_controls.cpp
+@@ -1677,10 +1677,10 @@
+ 		if (sse_algorithm.empty()) {
+ 			xrc_call(parent_, "ID_S3_NOENCRYPTION", &wxRadioButton::SetValue, true);
+ 		}
+-		else if (sse_algorithm == "AES256") {
++		else if (sse_algorithm == L"AES256") {
+ 			xrc_call(parent_, "ID_S3_AES256", &wxRadioButton::SetValue, true);
+ 		}
+-		else if (sse_algorithm == "aws:kms") {
++		else if (sse_algorithm == L"aws:kms") {
+ 			xrc_call(parent_, "ID_S3_AWSKMS", &wxRadioButton::SetValue, true);
+ 			auto sse_kms_key = site.server.GetExtraParameter("ssekmskey");
+ 			if (!sse_kms_key.empty()) {
+@@ -1691,7 +1691,7 @@
+ 				xrc_call(parent_, "ID_S3_KMSKEY", &wxChoice::SetSelection, static_cast<int>(s3_sse::KmsKey::DEFAULT));
+ 			}
+ 		}
+-		else if (sse_algorithm == "customer") {
++		else if (sse_algorithm == L"customer") {
+ 			xrc_call(parent_, "ID_S3_CUSTOMER_ENCRYPTION", &wxRadioButton::SetValue, true);
+ 			auto customer_key = server.GetExtraParameter("ssecustomerkey");
+ 			xrc_call(parent_, "ID_S3_CUSTOMER_KEY", &wxTextCtrl::ChangeValue, customer_key);

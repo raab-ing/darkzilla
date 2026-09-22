@@ -1,0 +1,8 @@
+# Patch and shell files must keep LF endings or GNU patch/configure choke.
+*.sh      text eol=lf
+*.patch   text eol=lf
+*.ac      text eol=lf
+*.am      text eol=lf
+
+# Batch wrappers: cmd.exe parses these most reliably with CRLF.
+*.cmd     text eol=crlf

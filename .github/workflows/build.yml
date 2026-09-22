@@ -1,0 +1,123 @@
+name: build darkzilla
+
+on:
+  schedule:
+    # Weekly check for new upstream FileZilla releases.
+    - cron: "17 4 * * 1"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "FileZilla version to build (blank = latest upstream)"
+        required: false
+        type: string
+      force:
+        description: "Build even if UPSTREAM_VERSION already matches"
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: write   # to create releases and bump UPSTREAM_VERSION
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.ver.outputs.version }}
+      should_build: ${{ steps.ver.outputs.should_build }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - id: ver
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+          FORCE: ${{ inputs.force }}
+        run: |
+          set -euo pipefail
+          if [ -n "${INPUT_VERSION:-}" ]; then
+            latest="$INPUT_VERSION"
+          else
+            latest="$(bash scripts/check-upstream.sh)"
+          fi
+          last="$(cat UPSTREAM_VERSION | tr -d '[:space:]')"
+          echo "latest=$latest last=$last"
+          echo "version=$latest" >> "$GITHUB_OUTPUT"
+          if [ "$latest" = "$last" ] && [ "${FORCE:-false}" != "true" ]; then
+            echo "should_build=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "should_build=true" >> "$GITHUB_OUTPUT"
+          fi
+
+  build:
+    needs: check
+    if: needs.check.outputs.should_build == 'true'
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: msys2 {0}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: true
+          install: >-
+            patch
+            zip
+            tar
+            curl
+            make
+          pacboy: >-
+            toolchain:p
+            pkgconf:p
+            nettle:p
+            gnutls:p
+            sqlite3:p
+            gettext:p
+            libidn2:p
+            boost:p
+            gmp:p
+            argon2:p
+            meson:p
+            ninja:p
+
+      # The dependency stack (libfilezilla, fzssh, wxWidgets) is by far the
+      # slowest part; reuse it when the inputs that affect it haven't moved.
+      - uses: actions/cache@v4
+        with:
+          path: |
+            work/prefix
+            work/wx33
+          key: deps-${{ runner.os }}-${{ hashFiles('scripts/build-msys2.sh', 'patches/wxwidgets/*') }}
+          restore-keys: deps-${{ runner.os }}-
+
+      - name: Build darkzilla ${{ needs.check.outputs.version }}
+        run: bash scripts/build-msys2.sh "${{ needs.check.outputs.version }}"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: darkzilla-${{ needs.check.outputs.version }}-win64
+          path: work/dist/*.zip
+          retention-days: 14
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          FZVER: ${{ needs.check.outputs.version }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="v${FZVER}-dark"
+          gh release create "$tag" \
+            --title "darkzilla $FZVER (FileZilla $FZVER + Windows dark mode)" \
+            --notes "Unofficial dark-mode build of FileZilla Client $FZVER for Windows 10/11. Follows the Windows light/dark setting. Built from upstream source + patches in this repo. Run install.ps1 inside the zip to install or update." \
+            work/dist/*.zip || \
+          gh release upload "$tag" work/dist/*.zip --clobber
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          echo "$FZVER" > UPSTREAM_VERSION
+          git add UPSTREAM_VERSION
+          git commit -m "Built FileZilla $FZVER" || true
+          git push origin "HEAD:${{ github.ref_name }}"

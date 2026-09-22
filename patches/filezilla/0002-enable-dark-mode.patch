@@ -1,0 +1,35 @@
+darkzilla: enable native Windows dark mode (follows the system setting).
+
+Call wxApp::MSWEnableDarkMode() in OnInit() before any windows are created.
+The default flag (DarkMode_Auto) follows the Windows light/dark setting.
+While dark mode is active, re-enable wxWidgets' own static box painting:
+OnInit() disables it and wxWidgets >= 3.3.3 leaves the label to the native
+group box control, which has no dark theme and paints it black.
+
+Derived from Pharaoh2k/FileZilla-Themed-For-Windows (GPLv3+).
+
+diff --git a/src/interface/FileZilla.cpp b/src/interface/FileZilla.cpp
+--- a/src/interface/FileZilla.cpp
++++ b/src/interface/FileZilla.cpp
+@@ -190,6 +190,21 @@
+ 	AddStartupProfileRecord("CFileZillaApp::OnInit(): Loading options"sv);
+ 	options_ = std::make_unique<COptions>();
+ 
++#ifdef __WXMSW__
++	// darkzilla: enable wxWidgets' native dark mode, following the Windows
++	// system setting (wxApp::DarkMode_Auto). Must run before any windows
++	// are created. Requires wxWidgets >= 3.3.
++	MSWEnableDarkMode();
++
++	// darkzilla: the native group box control has no dark theme and paints
++	// its label black; wxWidgets >= 3.3.3 no longer gives static boxes an
++	// explicit foreground colour that would switch them back to custom
++	// painting. The optimized-paint option was disabled above; re-enable it
++	// when dark mode is active so labels use the dark-mode text colour.
++	if (wxSystemSettings::GetAppearance().IsDark())
++		wxSystemOptions::SetOption(_T("msw.staticbox.optimized-paint"), 1);
++#endif
++
+ 	InitLocale();
+ 
+ #ifndef _DEBUG

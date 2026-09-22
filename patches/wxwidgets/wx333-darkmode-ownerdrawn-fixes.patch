@@ -1,0 +1,48 @@
+wxWidgets 3.3.3 dark-mode fix for FileZilla: route WM_DRAWITEM to the control
+by its HWND instead of by id.
+
+FileZilla creates many controls with the same id (nullID = wxID_HIGHEST). With
+native dark mode, checkboxes and radio buttons are owner-drawn, and wxWidgets'
+id-based FindItem() lookup could return the wrong control (often a static
+text), leaving the real checkbox unpainted or mislabeled in dark dialogs.
+
+Apply to the extracted wxWidgets 3.3.3 source before building:
+    cd wxWidgets-3.3.3 && patch -p1 < /path/to/wx333-darkmode-ownerdrawn-fixes.patch
+
+--- a/src/msw/window.cpp
++++ b/src/msw/window.cpp
+@@ -4802,18 +4802,29 @@
+ 
+ #if wxUSE_CONTROLS && !defined(__WXUNIVERSAL__)
+ 
++    // Find the control to draw by its HWND rather than by id: ids are not
++    // guaranteed to be unique (FileZilla and other apps create many controls
++    // with the same id), in which case FindItem(id) could return the wrong
++    // control -- or a non-owner-drawn one such as a static text -- leaving the
++    // actual owner-drawn control (e.g. a checkbox in dark mode) unpainted. The
++    // HWND from the DRAWITEMSTRUCT always identifies the right control. Fall
++    // back to the id-based lookup just in case.
++    HWND hwndItem = ((DRAWITEMSTRUCT *)itemStruct)->hwndItem;
++
+ #if wxUSE_OWNER_DRAWN
+-    wxControl *item = wxDynamicCast(FindItem(id), wxControl);
++    wxControl *item = wxDynamicCast(wxFindWinFromHandle(hwndItem), wxControl);
++    if ( !item )
++        item = wxDynamicCast(FindItem(id), wxControl);
+ #else // !wxUSE_OWNER_DRAWN
+     // we may still have owner-drawn buttons internally because we have to make
+     // them owner-drawn to support colour change
+-    wxControl *item =
+ #                     if wxUSE_BUTTON
+-                         wxDynamicCast(FindItem(id), wxButton)
++    wxControl *item = wxDynamicCast(wxFindWinFromHandle(hwndItem), wxButton);
++    if ( !item )
++        item = wxDynamicCast(FindItem(id), wxButton);
+ #                     else
+-                         nullptr
++    wxControl *item = nullptr;
+ #                     endif
+-                    ;
+ #endif // USE_OWNER_DRAWN
+ 
+     if ( item )
