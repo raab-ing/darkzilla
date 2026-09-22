@@ -184,12 +184,16 @@ cp -f "$PREFIX/bin/filezilla.exe" "$ZIPROOT/" 2>/dev/null \
     || cp -f src/interface/filezilla.exe "$ZIPROOT/" 2>/dev/null \
     || cp -f src/interface/.libs/filezilla.exe "$ZIPROOT/"
 
-# Runtime DLLs: walk ldd closure of filezilla.exe, skipping Windows system dirs.
+# Runtime DLLs: walk ldd closure of filezilla.exe, skipping Windows system
+# dirs. wx DLLs and the zip dir must be on PATH first so ldd resolves them;
+# otherwise their own deps (e.g. libpcre2 for wxbase) are silently missed.
+cp -f "$WXPREFIX"/lib/*.dll "$ZIPROOT/" 2>/dev/null || true
+export PATH="$ZIPROOT:$WXPREFIX/lib:$PREFIX/bin:$PATH"
 collect() {
     local bin="$1"
-    ldd "$bin" 2>/dev/null | awk '/=>/ && $3 ~ /^\// {print $3}' | while read -r d; do
+    ldd "$bin" 2>/dev/null | awk '/=>/ && $3 ~ /^\/|^[A-Za-z]:\// {print $3}' | while read -r d; do
         case "$d" in
-            /c/Windows/*|/c/WINDOWS/*|/cygdrive/c/Windows/*|/cygdrive/c/WINDOWS/*) continue ;;
+            /c/Windows/*|/c/WINDOWS/*|/cygdrive/c/Windows/*|/cygdrive/c/WINDOWS/*|C:/Windows/*|c:/Windows/*) continue ;;
         esac
         [ -f "$d" ] || continue
         local base; base="$(basename "$d")"
@@ -200,7 +204,13 @@ collect() {
     done
 }
 collect "$ZIPROOT/filezilla.exe"
-cp -f "$WXPREFIX"/lib/*.dll "$ZIPROOT/" 2>/dev/null || true
+
+# Sanity check: report anything ldd still can't resolve.
+missing="$(ldd "$ZIPROOT/filezilla.exe" 2>/dev/null | grep -i "not found" || true)"
+if [ -n "$missing" ]; then
+    echo "WARNING: unresolved DLL dependencies:"
+    echo "$missing"
+fi
 
 # Ship release-size binaries (the build uses -g for diagnosability).
 strip "$ZIPROOT/filezilla.exe" "$ZIPROOT"/*.dll 2>/dev/null || true
