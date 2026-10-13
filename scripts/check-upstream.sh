@@ -1,22 +1,22 @@
 #!/usr/bin/env bash
 # check-upstream.sh - print the newest upstream FileZilla Client version.
 #
-# Upstream publishes source tarballs without a machine-readable index, so we
-# use the Debian source package API (which tracks upstream closely) as the
-# version source of truth.
+# Version source of truth: the official FileZilla newsfeed (Atom), which
+# announces every release on the day it ships. We previously used the Debian
+# source package index, which lags upstream by weeks — it reported 3.71.0
+# while 3.71.1 had been out for seven weeks.
 #
-# Output: a bare version string, e.g. "3.71.0".
+# Output: a bare version string, e.g. "3.71.1".
 set -euo pipefail
 
-json="$(curl -fsSL --retry 3 --max-time 30 \
-    "https://sources.debian.org/api/src/filezilla/")"
+feed="$(curl -fsSL --retry 3 --max-time 30 \
+    "https://filezilla-project.org/newsfeed.php")"
 
-# Extract upstream part of each Debian version ("3.71.0-1" -> "3.71.0"),
-# keep only dotted-numeric versions, pick the highest.
-ver="$(printf '%s' "$json" \
-    | grep -oE '"version"[[:space:]]*:[[:space:]]*"[^"]+"' \
-    | sed -E 's/.*"([^"]+)".*/\1/; s/-.*//' \
-    | grep -E '^[0-9]+(\.[0-9]+)+$' \
+# Feed titles look like "FileZilla Client 3.71.1 released". Match "Client"
+# specifically — the same feed announces FileZilla Server releases too.
+ver="$(printf '%s' "$feed" \
+    | grep -oE 'FileZilla Client [0-9]+(\.[0-9]+)+' \
+    | grep -oE '[0-9]+(\.[0-9]+)+' \
     | sort -rV | head -n1)"
 
 if [ -z "$ver" ]; then
@@ -24,10 +24,10 @@ if [ -z "$ver" ]; then
     exit 1
 fi
 
-# Sanity: the source tarball must actually exist on the Debian mirror.
-if ! curl -fsI --max-time 30 \
-    "https://deb.debian.org/debian/pool/main/f/filezilla/filezilla_${ver}.orig.tar.xz" >/dev/null; then
-    echo "check-upstream: tarball for $ver not found on Debian pool" >&2
+# Sanity: the source tarball must actually exist on the upstream mirror.
+if ! curl -fsIL --max-time 30 \
+    "https://download.filezilla-project.org/client/FileZilla_${ver}_src.tar.xz" >/dev/null; then
+    echo "check-upstream: tarball for $ver not found on upstream mirror" >&2
     exit 1
 fi
 
