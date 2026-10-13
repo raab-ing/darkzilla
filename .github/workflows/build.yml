@@ -1,6 +1,10 @@
 name: build darkzilla
 
 on:
+  push:
+    # Pushing re-checks upstream too — the version gate below keeps
+    # non-release commits from building needlessly.
+    branches: [main]
   schedule:
     # Weekly check for new upstream FileZilla releases.
     - cron: "17 4 * * 1"
