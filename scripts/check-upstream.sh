@@ -24,10 +24,18 @@ if [ -z "$ver" ]; then
     exit 1
 fi
 
-# Sanity: the source tarball must actually exist on the upstream mirror.
-if ! curl -fsIL --max-time 30 \
-    "https://download.filezilla-project.org/client/FileZilla_${ver}_src.tar.xz" >/dev/null; then
-    echo "check-upstream: tarball for $ver not found on upstream mirror" >&2
+# Sanity: a usable source tarball must exist somewhere we build from.
+# download.filezilla-project.org only hosts binaries — source requests 307 to
+# the homepage, which -fsIL follows into a fake 200, so it can't be checked.
+# The build script tries the Debian pool first, then Fedora's lookaside
+# cache; mirror that here. Debian HEADs return a bare 200/404 (no -L needed);
+# Fedora's dist-git 'sources' index lists every upstream tarball by name.
+if ! curl -fsI --max-time 30 \
+    "https://deb.debian.org/debian/pool/main/f/filezilla/filezilla_${ver}.orig.tar.xz" >/dev/null \
+    && ! curl -fsSL --retry 3 --max-time 30 \
+        "https://src.fedoraproject.org/rpms/filezilla/raw/rawhide/f/sources" \
+        | grep -qF "FileZilla_${ver}_src.tar.xz"; then
+    echo "check-upstream: no source tarball for $ver on Debian or Fedora" >&2
     exit 1
 fi
 

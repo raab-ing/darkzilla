@@ -38,6 +38,37 @@ fetch() { # url dest
     curl -fL --retry 3 --connect-timeout 30 -o "$2" "$1"
 }
 
+# true only if $1 really is an xz tarball, not a redirected HTML page.
+is_xz_tarball() { [ -f "$1" ] && tar -tJf "$1" >/dev/null 2>&1; }
+
+# Download the FileZilla source tarball for $1 into filezilla.tar.xz.
+#
+# Upstream (download.filezilla-project.org) only hosts binaries — source
+# requests 307 to the homepage, which curl -fsIL follows into a fake 200, so
+# we can't use it at all. Debian's pool is our usual mirror but lags release
+# day by weeks (3.71.1 shipped Aug 26; still absent Oct 13). Fedora's
+# lookaside cache carries every upstream tarball immediately: the dist-git
+# 'sources' index maps tarball name -> sha512 used in the URL path.
+fetch_filezilla_src() {
+    local ver="$1" out="$2" deb sum
+    deb="https://deb.debian.org/debian/pool/main/f/filezilla/filezilla_${ver}.orig.tar.xz"
+    if fetch "$deb" "$out" && is_xz_tarball "$out"; then
+        echo ">> filezilla $ver source: Debian pool"
+        return 0
+    fi
+    echo ">> Debian pool lacks $ver, trying Fedora lookaside cache"
+    sum="$(curl -fsSL --retry 3 --connect-timeout 30 \
+        "https://src.fedoraproject.org/rpms/filezilla/raw/rawhide/f/sources" \
+        | grep -F "FileZilla_${ver}_src.tar.xz" | grep -oE '[0-9a-f]{128}' | head -n1 || true)"
+    if [ -n "$sum" ] \
+        && fetch "https://src.fedoraproject.org/repo/pkgs/filezilla/FileZilla_${ver}_src.tar.xz/sha512/${sum}/FileZilla_${ver}_src.tar.xz" "$out" \
+        && is_xz_tarball "$out"; then
+        echo ">> filezilla $ver source: Fedora lookaside"
+        return 0
+    fi
+    return 1
+}
+
 say() { printf '\n==== %s ====\n' "$*"; }
 
 # MSYS2 quirk: upstream locales Makefiles fix the .pot Content-Type header
@@ -137,7 +168,8 @@ chmod +x "$WORK/bin/wx-config"
 # ---------------------------------------------------------------- filezilla
 say "FileZilla $FZVER (patched)"
 cd "$WORK"
-fetch "https://deb.debian.org/debian/pool/main/f/filezilla/filezilla_${FZVER}.orig.tar.xz" filezilla.tar.xz
+fetch_filezilla_src "$FZVER" filezilla.tar.xz \
+    || { echo "ERROR: no usable FileZilla $FZVER source tarball (tried Debian + Fedora lookaside)"; exit 1; }
 rm -rf filezilla-src && mkdir filezilla-src
 tar -xf filezilla.tar.xz -C filezilla-src --strip-components=1
 cd filezilla-src
